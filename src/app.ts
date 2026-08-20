@@ -8,11 +8,26 @@ dotenv.config();
 
 interface ChatCompletionResponse {
   choices?: Array<{
-    message?: {
-      content?: string;
-    };
+    id?: number;
+    message?: string;
   }>;
 }
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const MODAL = process.env.modal || "TheStageAI/Qwen3.5-9B-GGUF:Q4_K_M";
+
+app.use(cors());
+app.use(express.json());
+
+const SYSTEM_PROMPT = readFileSync(
+  process.env.SYSTEM_PROMPT_PATH ||
+    "src/system-prompt/quote_generator_prompt.txt",
+  "utf-8",
+);
+
+const LLAMA_SERVER_URL =
+  process.env.LLAMA_SERVER_URL || "http://127.0.0.1:8080/v1/chat/completions";
 
 function buildSubmissionPrompt({
   topic,
@@ -27,9 +42,7 @@ function buildSubmissionPrompt({
 }): string {
   const sections: string[] = [];
 
-  sections.push(
-    `Generate a quote about "${topic}" in a "${style}" style.`,
-  );
+  sections.push(`Generate a quote about "${topic}" in a "${style}" style.`);
 
   if (liked.length > 0) {
     sections.push(
@@ -54,22 +67,7 @@ function buildSubmissionPrompt({
   return sections.join("\n\n");
 }
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const MODAL = process.env.modal || "TheStageAI/Qwen3.5-9B-GGUF:Q4_K_M";
-
-app.use(cors());
-app.use(express.json());
-
 // Load system prompt
-const SYSTEM_PROMPT = readFileSync(
-  process.env.SYSTEM_PROMPT_PATH ||
-    "src/system-prompt/quote_generator_prompt.txt",
-  "utf-8",
-);
-
-const LLAMA_SERVER_URL =
-  process.env.LLAMA_SERVER_URL || "http://127.0.0.1:8080/v1/chat/completions";
 
 app.get("/api/generate-quote", async (req: Request, res: Response) => {
   const { topic, style = "inspiring" } = req.query;
@@ -105,6 +103,8 @@ app.get("/api/generate-quote", async (req: Request, res: Response) => {
       }),
     });
 
+    console.log("response", response);
+
     if (!response.ok) {
       const errText = await response.text();
       console.error("llama-server error:", response.status, errText);
@@ -114,7 +114,7 @@ app.get("/api/generate-quote", async (req: Request, res: Response) => {
     }
 
     const data = (await response.json()) as ChatCompletionResponse;
-    const quote: string | undefined = data?.choices?.[0]?.message?.content;
+    const quote: string | undefined = data?.choices?.[0]?.message;
 
     if (!quote) {
       return res.status(502).json({
@@ -142,7 +142,9 @@ app.post("/api/feedback", (req: Request, res: Response) => {
     return res.status(400).json({ error: "quote is required" });
   }
   if (vote !== "liked" && vote !== "disliked") {
-    return res.status(400).json({ error: 'vote must be "liked" or "disliked"' });
+    return res
+      .status(400)
+      .json({ error: 'vote must be "liked" or "disliked"' });
   }
 
   addFeedback(vote, quote.trim());
