@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import cors from "cors";
 import dotenv from "dotenv";
 import { readFileSync } from "fs";
 
@@ -16,6 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MODAL = process.env.modal || "TheStageAI/Qwen3.5-9B-GGUF:Q4_K_M";
 
+app.use(cors());
 app.use(express.json());
 
 // Load system prompt
