@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { readFileSync } from "fs";
+import { addFeedback, getExamples } from "./feedback";
 
 dotenv.config();
 
@@ -11,6 +12,46 @@ interface ChatCompletionResponse {
       content?: string;
     };
   }>;
+}
+
+function buildSubmissionPrompt({
+  topic,
+  style,
+  liked,
+  disliked,
+}: {
+  topic: string;
+  style: string;
+  liked: string[];
+  disliked: string[];
+}): string {
+  const sections: string[] = [];
+
+  sections.push(
+    `Generate a quote about "${topic}" in a "${style}" style.`,
+  );
+
+  if (liked.length > 0) {
+    sections.push(
+      `The user has previously LIKED quotes with this quality. Imitate the tone, structure, and voice of these EXACT examples:\n${liked
+        .map((q, i) => `${i + 1}. "${q}"`)
+        .join("\n")}`,
+    );
+  }
+
+  if (disliked.length > 0) {
+    sections.push(
+      `The user has previously DISLIKED quotes like these. Do NOT mirror their tone, structure, or phrasing:\n${disliked
+        .map((q, i) => `${i + 1}. "${q}"`)
+        .join("\n")}`,
+    );
+  }
+
+  sections.push(
+    `Return ONLY the quote text. No analysis, no JSON, no extra commentary.`,
+  );
+
+  return sections.join("\n\n");
 }
 
 const app = express();
@@ -42,6 +83,14 @@ app.get("/api/generate-quote", async (req: Request, res: Response) => {
 
   // In production, this would call your LLM/API
   try {
+    const { liked, disliked } = getExamples();
+    const userContent = buildSubmissionPrompt({
+      topic: String(topic),
+      style: String(style),
+      liked,
+      disliked,
+    });
+
     const response = await fetch(LLAMA_SERVER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -49,10 +98,7 @@ app.get("/api/generate-quote", async (req: Request, res: Response) => {
         model: `${MODAL}`,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `Generate a quote about ${topic} in a ${style} style`,
-          },
+          { role: "user", content: userContent },
         ],
         max_token: 5000,
         temperature: 0.8,
@@ -87,6 +133,20 @@ app.get("/api/generate-quote", async (req: Request, res: Response) => {
       error: "Failed to generate quote. Is llama-server running?",
     });
   }
+});
+
+app.post("/api/feedback", (req: Request, res: Response) => {
+  const { quote, vote } = req.body ?? {};
+
+  if (typeof quote !== "string" || !quote.trim()) {
+    return res.status(400).json({ error: "quote is required" });
+  }
+  if (vote !== "liked" && vote !== "disliked") {
+    return res.status(400).json({ error: 'vote must be "liked" or "disliked"' });
+  }
+
+  addFeedback(vote, quote.trim());
+  res.status(201).json({ status: "ok", vote, quote: quote.trim() });
 });
 
 app.get("/api/health", (req: Request, res: Response) => {
